@@ -16,7 +16,6 @@ Options:
     -s SECRET_ACCESS_KEY    Amazon secret access token.
     -S /path/to/file        Path to file containing the secret access token.
     -D /path/to/db/file     Where to store the database.
-                            Default: /home/darren/.aksp.db
     -m MODE                 Amazon search mode.
     -l LOCALE               Use the specified locale.  See the XML::Amazon
                             docs for details.
