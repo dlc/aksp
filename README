@@ -1,0 +1,33 @@
+aksp - Amazon Keyword Search Poller
+
+Generates RSS feeds of new items from Amazon that match a set of
+keywords. Each time aksp is run for a particular set of keywords,
+matches are stored in the internal database and a new feed is
+generated.
+
+Usage:
+
+    $ aksp OPTIONS KEYWORDS
+
+Options:
+
+    -t TOKEN                Amazon token.
+    -T /path/to/file        Path to file containing the amazon token.
+    -s SECRET_ACCESS_KEY    Amazon secret access token.
+    -S /path/to/file        Path to file containing the secret access token.
+    -D /path/to/db/file     Where to store the database.
+                            Default: /home/darren/.aksp.db
+    -m MODE                 Amazon search mode.
+    -l LOCALE               Use the specified locale.  See the XML::Amazon
+                            docs for details.
+    -O /path/to/feed/file   If specified, generate an RSS feed and write it
+                            to this path.  Otherwise, just update the DB.
+
+Both -t or -T and -s or -S are required.  
+
+KEYWORDS is what to search for, and is required.
+
+If -O is not specified, the database is updated but no output is
+generated.  This is the recommended way to run aksp the first
+time.
+
