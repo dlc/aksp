@@ -13,7 +13,8 @@ use strict;
 use warnings;
 
 use vars qw($VERSION $ME);
-use vars qw($opt_D $opt_O $opt_S $opt_T $opt_V $opt_h $opt_l $opt_m $opt_s $opt_t);
+use vars qw($opt_D $opt_O $opt_S $opt_T $opt_V);
+use vars qw( $opt_h $opt_l $opt_m $opt_s $opt_t $opt_v);
 
 use DBD::SQLite;
 use DBI;
@@ -27,7 +28,7 @@ use XML::RSS;
 $VERSION = "0.01";
 $ME = basename($0);
 
-getopts('D:O:S:T:Vhl:m:s:t:');
+getopts('D:O:S:T:Vhl:m:s:t:v');
 
 my $keyword = "@ARGV";
 $opt_h++ unless $keyword;
@@ -72,47 +73,49 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
     }
 
     # Generate the feed -- all items matching the keyword somce $start_time
-    my @new_items = new_items($dbh, $start_time);
+    if ($opt_O) {
+        my @new_items = new_items($dbh, $start_time, $keyword);
 
-    if (@new_items && $opt_O) {
-        #print Dumper(\@new_items);
+        if (@new_items) {
+            #print Dumper(\@new_items);
 
-        my $rss = XML::RSS->new(version => "2.0");
-        $rss->channel(
-            title => "Amazon Keyword Search Poller: '$keyword'",
-        );
-
-        for my $i (@new_items) {
-            my $desc = qq(Title: $i->{'title'}<br/>)
-                     . qq(URL: $i->{'url'}<br/>)
-                     . qq(Found on: ) . strftime("%Y-%m-%d %H:%M", localtime $i->{'ts'});
-
-            my %item = (
-                'title'         => $i->{'title'},
-                'link'          => $i->{'url'},
-                'permaLink'     => $i->{'url'},
+            my $rss = XML::RSS->new(version => "2.0");
+            $rss->channel(
+                title => "Amazon Keyword Search Poller: '$keyword'",
             );
 
-            if (my $x = $i->{'images'}->{'l'}) {
-                $item{'enclosure'} = {
-                    url => $x->{'url'},
-                    type => "image/jpeg",
-                };
+            for my $i (@new_items) {
+                my $desc = qq(Title: <a hrf="$i->{'url'}">$i->{'title'}</a><br/>)
+                         . qq(URL: $i->{'url'}<br/>)
+                         . qq(Found on: ) . strftime("%Y-%m-%d %H:%M", localtime $i->{'ts'});
 
-                $desc = qq(<img src="$x->{'url'}"/> $desc);
+                my %item = (
+                    'title'         => $i->{'title'},
+                    'link'          => $i->{'url'},
+                    'permaLink'     => $i->{'url'},
+                );
+
+                if (my $x = $i->{'images'}->{'l'}) {
+                    $item{'enclosure'} = {
+                        url => $x->{'url'},
+                        type => "image/jpeg",
+                    };
+
+                    $desc = qq(<img src="$x->{'url'}"/> $desc);
+                }
+
+                $item{'description'} = $desc;
+                $rss->add_item(%item);
             }
 
-            $item{'description'} = $desc;
-            $rss->add_item(%item);
-        }
-
-        if (open my $fh, ">$opt_O.tmp") {
-            print $fh $rss->as_string;
-            close $fh;
-            rename "$opt_O.tmp" => $opt_O;
-        }
-        else {
-            die "Error opening $opt_O.tmp: $!";
+            if (open my $fh, ">$opt_O.tmp") {
+                print $fh $rss->as_string;
+                close $fh;
+                rename "$opt_O.tmp" => $opt_O;
+            }
+            else {
+                die "Error opening $opt_O.tmp: $!";
+            }
         }
     }
 }
@@ -172,6 +175,15 @@ sub slurpline {
     return;
 }
 
+sub verbose {
+    return unless $opt_v;
+    for (@_) {
+        chomp;
+        #print "[$ME] $_\n";
+        print "$_\n";
+    }
+}
+
 # ----------------------------------------------------------------------
 # Database-Related functions
 # ----------------------------------------------------------------------
@@ -188,6 +200,7 @@ sub dbh {
 
     # Create the schema if it doesn't exist
     unless ($exists) {
+        verbose("Creating new database in $dbfile...");
         my @schema = schema();
         my @errors = ();
         for my $s (@schema) {
@@ -212,6 +225,7 @@ sub save_item {
     my $kw = shift;
     my $i = shift;
 
+    verbose("Saving '" . $i->title ."' (" . $i->asin . ")");
     $dbh->do("
         INSERT OR IGNORE INTO item
             (keyword, asin, title, url, type, price, ts)
@@ -248,13 +262,15 @@ sub save_item {
 sub new_items {
     my $dbh = shift;
     my $start_time = shift;
+    my $keyword = shift;
     my @items;
 
-    my $sth = $dbh->prepare("SELECT asin FROM item WHERE ts > ?");
-    #my $sth2 = $dbh->prepare("SELECT * FROM person WHERE asin = ?");
-    #my $sth3 = $dbh->prepare("SELECT * FROM image WHERE asin = ?");
+    my $sth = $dbh->prepare("SELECT asin FROM item WHERE ts >= ? AND keyword = ?");
 
-    $sth->execute($start_time);
+    $sth->execute($start_time, $keyword);
+    my $nres = $sth->rows;
+    my $s = $nres == 1 ? "" : "s";
+    verbose("Found $nres new item$s");
 
     while (my ($r) = $sth->fetchrow) {
         my $item = $dbh->selectrow_hashref("SELECT * FROM item WHERE asin = ?", undef, $r);
