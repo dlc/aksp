@@ -1,0 +1,288 @@
+#!/usr/bin/perl
+
+# ----------------------------------------------------------------------
+# aksp - Amazon Keyword Search Poller
+#
+# Given a set of keywords, aksp will query Amazon for each keyword,
+# and generate a feed with new any items in it.  The first time aksp
+# is run for a particular keyword, it will find everything, but each
+# run thereafter will only list new items.
+# ----------------------------------------------------------------------
+
+use strict;
+use warnings;
+
+use vars qw($VERSION $ME);
+use vars qw($opt_D $opt_O $opt_S $opt_T $opt_V $opt_h $opt_l $opt_m $opt_s $opt_t);
+
+use DBD::SQLite;
+use DBI;
+use Data::Dumper;
+use File::Basename qw(basename);
+use Getopt::Std;
+use POSIX qw(strftime);
+use XML::Amazon;
+use XML::RSS;
+
+$VERSION = "0.01";
+$ME = basename($0);
+
+getopts('D:O:S:T:Vhl:m:s:t:');
+
+my $keyword = "@ARGV";
+$opt_h++ unless $keyword;
+
+if ($opt_V) {
+    print "$ME v$VERSION\n";
+    exit;
+}
+
+if ($opt_T && ! $opt_t) {
+    $opt_t = slurpline($opt_T);
+}
+
+if ($opt_S && ! $opt_s) {
+    $opt_s = slurpline($opt_S);
+}
+
+$opt_D ||= do {
+    my $home = $ENV{'HOME'} || "/tmp";
+    glob "$home/.$ME.db";
+};
+
+if ($opt_h) {
+    print usage();
+    exit;
+}
+
+# Note start time
+my $start_time = $^T;
+
+# Connect to db....
+my $dbh = dbh($opt_D);
+
+# Connect to Amazon...
+my $xa = XML::Amazon->new(token => $opt_t, sak => $opt_s, locale => $opt_l);
+
+# Search
+if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
+    # Save items
+    for my $r ($res->collection) {
+        save_item($dbh, $keyword, $r);
+    }
+
+    # Generate the feed -- all items matching the keyword somce $start_time
+    my @new_items = new_items($dbh, $start_time);
+
+    if (@new_items && $opt_O) {
+        #print Dumper(\@new_items);
+
+        my $rss = XML::RSS->new(version => "2.0");
+        $rss->channel(
+            title => "Amazon Keyword Search Poller: '$keyword'",
+        );
+
+        for my $i (@new_items) {
+            my $desc = qq(Title: $i->{'title'}<br/>)
+                     . qq(URL: $i->{'url'}<br/>)
+                     . qq(Found on: ) . strftime("%Y-%m-%d %H:%M", localtime $i->{'ts'});
+
+            my %item = (
+                'title'         => $i->{'title'},
+                'link'          => $i->{'url'},
+                'permaLink'     => $i->{'url'},
+            );
+
+            if (my $x = $i->{'images'}->{'l'}) {
+                $item{'enclosure'} = {
+                    url => $x->{'url'},
+                    type => "image/jpeg",
+                };
+
+                $desc = qq(<img src="$x->{'url'}"/> $desc);
+            }
+
+            $item{'description'} = $desc;
+            $rss->add_item(%item);
+        }
+
+        if (open my $fh, ">$opt_O.tmp") {
+            print $fh $rss->as_string;
+            close $fh;
+            rename "$opt_O.tmp" => $opt_O;
+        }
+        else {
+            die "Error opening $opt_O.tmp: $!";
+        }
+    }
+}
+
+# ----------------------------------------------------------------------
+# Subroutines
+# ----------------------------------------------------------------------
+
+sub usage {
+    return <<HELP;
+$ME - Amazon Keyword Search Poller
+
+Generates RSS feeds of new items from Amazon that match a set of
+keywords. Each time $ME is run for a particular set of keywords,
+matches are stored in the internal database and a new feed is
+generated.
+
+Usage:
+
+    \$ $ME OPTIONS KEYWORDS
+
+Options:
+
+    -t TOKEN                Amazon token.
+    -T /path/to/file        Path to file containing the amazon token.
+    -s SECRET_ACCESS_KEY    Amazon secret access token.
+    -S /path/to/file        Path to file containing the secret access token.
+    -D /path/to/db/file     Where to store the database.
+                            Default: $opt_D
+    -m MODE                 Amazon search mode.
+    -l LOCALE               Use the specified locale.  See the XML::Amazon
+                            docs for details.
+    -O /path/to/feed/file   If specified, generate an RSS feed and write it
+                            to this path.  Otherwise, just update the DB.
+
+Both -t or -T and -s or -S are required.  
+
+KEYWORDS is what to search for, and is required.
+
+If -O is not specified, the database is updated but no output is
+generated.  This is the recommended way to run $ME the first
+time.
+
+HELP
+}
+
+# Read the first line of a file into a scalar
+sub slurpline {
+    my $file = shift;
+    if (open my $fh, $file) {
+        my $data = <$fh>;
+        $data =~ s/\s//g;
+
+        return $data;
+    }
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Database-Related functions
+# ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# Create the db handle and populate the db with the schema, if necessary
+# ----------------------------------------------------------------------
+sub dbh {
+    my $dbfile = shift;
+
+    my $exists = -f $dbfile;
+    my $dbh = DBI->connect("DBI:SQLite:dbname=$dbfile")
+        or die "Can't open $dbfile: $!";
+
+    # Create the schema if it doesn't exist
+    unless ($exists) {
+        my @schema = schema();
+        my @errors = ();
+        for my $s (@schema) {
+            unless ($dbh->do($s)) {
+                push @errors, $dbh->errstr;
+            }
+        }
+
+        unless (@errors == 0) {
+            $dbh->disconnect;
+            unlink $dbfile;
+            my $s = @errors == 1 ? "" : "s";
+            die "Error$s creating schema: @errors";
+        }
+    }
+
+    return $dbh;
+}
+
+sub save_item {
+    my $dbh = shift;
+    my $kw = shift;
+    my $i = shift;
+
+    $dbh->do("
+        INSERT OR IGNORE INTO item
+            (keyword, asin, title, url, type, price, ts)
+        VALUES
+            (?, ?, ?, ?, ?, ?, ?)", undef,
+        $kw, $i->asin, $i->title, $i->url, $i->type, $i->price, time);
+
+    for my $size (qw(s m l)) {
+        if (my $img = $i->image($size)) {
+            $dbh->do("
+                INSERT OR IGNORE INTO image
+                    (asin, url, rel)
+                VALUES
+                    (?, ?, ?)", undef,
+                $i->asin, $img, $size);
+        }
+    }
+
+    for my $ctype (qw(author artist creator)) {
+        my $meth = $ctype . "s";
+        if (my @x = $i->$meth) {
+            for my $x (@x) {
+                $dbh->do("
+                    INSERT OR IGNORE INTO person
+                        (asin, name, rel)
+                    VALUES
+                        (?, ?, ?)", undef,
+                    $i->asin, $x, $ctype);
+            }
+        }
+    }
+}
+
+sub new_items {
+    my $dbh = shift;
+    my $start_time = shift;
+    my @items;
+
+    my $sth = $dbh->prepare("SELECT asin FROM item WHERE ts > ?");
+    #my $sth2 = $dbh->prepare("SELECT * FROM person WHERE asin = ?");
+    #my $sth3 = $dbh->prepare("SELECT * FROM image WHERE asin = ?");
+
+    $sth->execute($start_time);
+
+    while (my ($r) = $sth->fetchrow) {
+        my $item = $dbh->selectrow_hashref("SELECT * FROM item WHERE asin = ?", undef, $r);
+
+        $item->{'people'} = $dbh->selectall_hashref("SELECT * FROM person WHERE asin = ?", "rel", undef, $r);
+        $item->{'images'} = $dbh->selectall_hashref("SELECT * FROM image WHERE asin = ?", "rel", undef, $r);
+        push @items, $item;
+    }
+
+    return @items;
+}
+
+sub schema {
+    return (
+        "CREATE TABLE item (keyword, asin, title, url, type, price, ts)",
+        "CREATE UNIQUE INDEX item_uniq ON item (keyword, asin, title, url, type)", 
+        "CREATE INDEX item_keyword ON item (keyword)",
+        "CREATE INDEX item_asin ON item (asin)",
+        "CREATE INDEX item_type ON item (type)",
+        "CREATE INDEX item_title ON item (title)",
+
+        "CREATE TABLE person (asin, name, rel)",
+        "CREATE UNIQUE INDEX person_uniq ON person (asin, name, rel)",
+        "CREATE INDEX person_asin ON person (asin)",
+        "CREATE INDEX person_name ON person (name)",
+
+        "CREATE TABLE image (asin, url, rel)",
+        "CREATE UNIQUE INDEX image_uniq ON image (asin, url, rel)",
+        "CREATE INDEX image_asin ON image (asin)",
+    );
+}
