@@ -85,7 +85,7 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
             );
 
             for my $i (@new_items) {
-                my $desc = qq(Title: <a hrf="$i->{'url'}">$i->{'title'}</a><br/>)
+                my $desc = qq(Title: <a href="$i->{'url'}">$i->{'title'}</a><br/>)
                          . qq(URL: $i->{'url'}<br/>)
                          . qq(Found on: ) . strftime("%Y-%m-%d %H:%M", localtime $i->{'ts'});
 
