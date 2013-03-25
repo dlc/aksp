@@ -14,7 +14,7 @@ use warnings;
 
 use vars qw($VERSION $ME);
 use vars qw($opt_D $opt_O $opt_S $opt_T $opt_V);
-use vars qw( $opt_h $opt_l $opt_m $opt_s $opt_t $opt_v);
+use vars qw($opt_a $opt_h $opt_l $opt_m $opt_s $opt_t $opt_v);
 
 use DBD::SQLite;
 use DBI;
@@ -24,11 +24,12 @@ use Getopt::Std;
 use POSIX qw(strftime);
 use XML::Amazon;
 use XML::RSS;
+use URI;
 
 $VERSION = "0.01";
 $ME = basename($0);
 
-getopts('D:O:S:T:Vhl:m:s:t:v');
+getopts('D:O:S:T:Va:hl:m:s:t:v');
 
 my $keyword = "@ARGV";
 $opt_h++ unless $keyword;
@@ -77,22 +78,27 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
         my @new_items = new_items($dbh, $start_time, $keyword);
 
         if (@new_items) {
-            #print Dumper(\@new_items);
+            my $search_uri = URI->new("http://www.amazon.com/s/ref=nb_sb_noss");
+            $search_uri->query_form("field-keywords" => $keyword);
 
             my $rss = XML::RSS->new(version => "2.0");
             $rss->channel(
-                title => "Amazon Keyword Search Poller: '$keyword'",
+                'title' => "Amazon Keyword Search Poller: '$keyword'",
+                'link'  => $search_uri->canonical,
             );
 
             for my $i (@new_items) {
+                my $link = URI->new("http://www.amazon.com/dp/$i->{'asin'}/");
+                $link->query_form(tag => $opt_a) if $opt_a;
+
                 my $desc = qq(Title: <a href="$i->{'url'}">$i->{'title'}</a><br/>)
                          . qq(URL: $i->{'url'}<br/>)
                          . qq(Found on: ) . strftime("%Y-%m-%d %H:%M", localtime $i->{'ts'});
 
                 my %item = (
                     'title'         => $i->{'title'},
-                    'link'          => $i->{'url'},
-                    'permaLink'     => $i->{'url'},
+                    'link'          => $link,
+                    'permaLink'     => $link,
                 );
 
                 if (my $x = $i->{'images'}->{'l'}) {
@@ -101,7 +107,7 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
                         type => "image/jpeg",
                     };
 
-                    $desc = qq(<img src="$x->{'url'}"/> $desc);
+                    $desc = qq(<a href="$link" style="border: 0px;"><img src="$x->{'url'}"/></a> $desc);
                 }
 
                 $item{'description'} = $desc;
@@ -148,6 +154,7 @@ Options:
     -m MODE                 Amazon search mode.
     -l LOCALE               Use the specified locale.  See the XML::Amazon
                             docs for details.
+    -a TAG                  Append \$TAG to the end of all generated links
     -O /path/to/feed/file   If specified, generate an RSS feed and write it
                             to this path.  Otherwise, just update the DB.
 
