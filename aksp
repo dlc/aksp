@@ -12,7 +12,7 @@
 use strict;
 use warnings;
 
-use vars qw($VERSION $ME);
+use vars qw($VERSION $ME $DATE_FMT);
 use vars qw($opt_D $opt_O $opt_S $opt_T $opt_V);
 use vars qw($opt_a $opt_h $opt_l $opt_m $opt_s $opt_t $opt_v);
 
@@ -28,6 +28,7 @@ use URI;
 
 $VERSION = "0.01";
 $ME = basename($0);
+$DATE_FMT = '%a, %e %b %Y %H:%M:%S %Z';
 
 getopts('D:O:S:T:Va:hl:m:s:t:v');
 
@@ -59,6 +60,7 @@ if ($opt_h) {
 
 # Note start time
 my $start_time = $^T;
+verbose("Start time: $start_time");
 
 # Connect to db....
 my $dbh = dbh($opt_D);
@@ -70,12 +72,15 @@ my $xa = XML::Amazon->new(token => $opt_t, sak => $opt_s, locale => $opt_l);
 if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
     # Save items
     for my $r ($res->collection) {
-        save_item($dbh, $keyword, $r);
+        save_item($dbh, $keyword, $r, $start_time);
     }
 
     # Generate the feed -- all items matching the keyword somce $start_time
     if ($opt_O) {
         my @new_items = new_items($dbh, $start_time, $keyword);
+        my $nres = @new_items;
+        my $s = $nres == 1 ? "" : "s";
+        verbose("Found $nres new item$s");
 
         if (@new_items) {
             my $search_uri = URI->new("http://www.amazon.com/s/ref=nb_sb_noss");
@@ -99,6 +104,7 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
                     'title'         => $i->{'title'},
                     'link'          => $link,
                     'permaLink'     => $link,
+                    'pubDate'       => strftime($DATE_FMT, localtime $i->{'ts'}),
                 );
 
                 if (my $x = $i->{'images'}->{'l'}) {
@@ -231,8 +237,9 @@ sub save_item {
     my $dbh = shift;
     my $kw = shift;
     my $i = shift;
+    my $st = shift;
 
-    verbose("Saving '" . $i->title ."' (" . $i->asin . ")");
+    verbose("Saving '" . $i->title ."' (" . $i->asin . ") at $st");
     $dbh->do("
         INSERT OR IGNORE INTO item
             (keyword, asin, title, url, type, price, ts)
@@ -276,8 +283,6 @@ sub new_items {
 
     $sth->execute($start_time, $keyword);
     my $nres = $sth->rows;
-    my $s = $nres == 1 ? "" : "s";
-    verbose("Found $nres new item$s");
 
     while (my ($r) = $sth->fetchrow) {
         my $item = $dbh->selectrow_hashref("SELECT * FROM item WHERE asin = ?", undef, $r);
