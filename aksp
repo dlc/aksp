@@ -243,7 +243,7 @@ sub save_item {
     my $i = shift;
     my $st = shift;
 
-    verbose("Saving '" . $i->title ."' (" . $i->asin . ") at $st");
+    verbose("Saving '" . ($i->title || '') ."' (" . $i->asin . ") at $st");
     $dbh->do("
         INSERT OR IGNORE INTO item
             (keyword, asin, title, url, type, price, ts)
