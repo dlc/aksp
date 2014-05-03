@@ -93,11 +93,12 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
             );
 
             for my $i (@new_items) {
+                next unless $i->{'title'};
                 my $link = URI->new("http://www.amazon.com/dp/$i->{'asin'}/");
                 $link->query_form(tag => $opt_a) if $opt_a;
 
-                my $desc = qq(Title: <a href="$i->{'url'}">$i->{'title'}</a><br/>)
-                         . qq(URL: $i->{'url'}<br/>)
+                my $desc = qq(Title: <a href="$link">$i->{'title'}</a><br/>)
+                         . qq(URL: $link<br/>)
                          . qq(Found on: ) . strftime("%Y-%m-%d %H:%M", localtime $i->{'ts'});
 
                 my %item = (
@@ -120,7 +121,10 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
                 $rss->add_item(%item);
             }
 
-            if (open my $fh, ">$opt_O.tmp") {
+            if ("-" eq $opt_O) {
+                print $rss->as_string;
+            }
+            elsif (open my $fh, ">$opt_O.tmp") {
                 print $fh $rss->as_string;
                 close $fh;
                 rename "$opt_O.tmp" => $opt_O;
