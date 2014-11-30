@@ -99,7 +99,7 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
 
                 my $desc = qq(Title: <a href="$link">$i->{'title'}</a><br/>)
                          . qq(URL: <a href="$link">$link</a><br/>)
-                         . qq(Keywords: $keyword<br />).
+                         . qq(Keywords: $keyword<br />)
                          . qq(Found on: ) . strftime("%Y-%m-%d %H:%M", localtime $i->{'ts'});
 
                 my %item = (
