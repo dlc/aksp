@@ -103,7 +103,7 @@ if (my $res = $xa->search(keywords => $keyword, type => $opt_m)) {
                          . qq(Found on: ) . strftime("%Y-%m-%d %H:%M", localtime $i->{'ts'});
 
                 my %item = (
-                    'title'         => "$i->{'title'} ($keywords)",
+                    'title'         => "$i->{'title'} ($keyword)",
                     'link'          => $link,
                     'permaLink'     => $link,
                     'pubDate'       => strftime($DATE_FMT, localtime $i->{'ts'}),
